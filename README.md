@@ -249,3 +249,89 @@ We choose **consistency** over availability.
 ---
 
 If you want me to start coding now, say: **“go build”**.
+
+## 9) Why Each Unit Exists (Function + Link)
+This section explains the *purpose* of each unit and how it connects to other units.
+
+**Client API**
+- Function: The only way users interact with the system; standardizes `Put` and `Get` operations.
+- Link: Talks only to the Leader Node; depends on the Leader’s RPC handler and dedup logic to make retries safe.
+
+**Leader Node**
+- Function: The single decision‑maker that orders writes and guarantees consistency.
+- Link: Receives requests from Client API and coordinates Followers via replication RPCs.
+
+**Follower Nodes**
+- Function: Provide redundancy so the system survives one crash.
+- Link: Accept replicated log entries from Leader and acknowledge back; apply commit updates.
+
+**Replication Log**
+- Function: The authoritative sequence of writes; enables replay and consistent ordering.
+- Link: Written first by Leader, then mirrored by Followers; drives Commit & Apply Engine.
+
+**Commit & Apply Engine**
+- Function: Turns ordered log entries into durable state in the KV map.
+- Link: Reads from Replication Log; only advances after Leader confirms majority ack.
+
+**Deduplication Store**
+- Function: Prevents duplicate writes when clients retry with the same `request_id`.
+- Link: Used by Leader Node before logging; updated after commit to remember results.
+
+**Fault Injection Layer**
+- Function: Simulates failure modes so correctness is tested, not assumed.
+- Link: Wraps RPC calls between Leader and Followers (and optionally Client → Leader).
+
+**Test Harness**
+- Function: Proves guarantees by running controlled fault scenarios.
+- Link: Uses Fault Injection Layer to create crashes, drops, and delays; inspects log and KV state.
+
+**Postmortem Report**
+- Function: Explains *why* the system holds up and where it might fail.
+- Link: Summarizes observed behaviors from Test Harness and design tradeoffs.
+
+## 10) Arrow Representation (Unit Flow)
+Use these arrows to visualize how units depend on each other and how data moves.
+
+**Write Path**
+Client API → Leader RPC Handler → Dedup Check → Append Local Log → Replicate To Followers → Majority Ack Gate → Commit & Apply Engine → Reply To Client
+
+**Read Path**
+Client API → Leader RPC Handler → KV Read → Reply To Client
+
+**Replication Path**
+Leader Replication RPC → Follower RPC Handler → Append Entry → Apply Commit → ACK → Leader
+
+**Fault Injection Overlay**
+Fault Injection Layer → (wraps all RPC arrows above)
+
+**Testing & Analysis**
+Test Harness → Fault Injection Layer → System Units → Postmortem Report
+
+## 11) Arrow Sketch (Visual Workflow Map)
+Below is a compact, visible arrow sketch that shows the workflow at a glance.
+
+```text
+WRITE WORKFLOW
+Client
+  | Put(key, value, request_id)
+  v
+Leader
+  | Dedup → Append Log → Replicate
+  v                 \
+Followers (2)        \
+  | Ack               \
+  v                   \
+Leader (Majority Ack)  
+  | Commit → Apply
+  v
+Client (Reply)
+
+READ WORKFLOW
+Client → Leader → KV Read → Client
+
+FAULT INJECTION (wraps every RPC arrow)
+[Crash / Drop / Delay] → (RPC call)
+
+TESTING & REPORT
+Test Harness → Fault Injection → System → Postmortem Report
+```
