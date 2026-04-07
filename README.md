@@ -335,3 +335,48 @@ FAULT INJECTION (wraps every RPC arrow)
 TESTING & REPORT
 Test Harness → Fault Injection → System → Postmortem Report
 ```
+
+## 12) Client API (First Unit We Define)
+We will define the Client API first because every other unit exists to satisfy *client‑visible behavior*. No code yet — just exact behavior and rules.
+
+### 12.1 Client API Purpose
+- Provide a minimal, deterministic interface for `Put` and `Get`.
+- Make retries safe by requiring a stable `request_id` per logical write.
+- Hide replication and fault handling from clients.
+
+### 12.2 Client API Operations (Behavior Only)
+**Put(key, value, request_id)**
+- Input:
+  - `key`: string identifier.
+  - `value`: string payload.
+  - `request_id`: unique per logical write (client must reuse for retries).
+- Expected behavior:
+  - Client sends to leader only.
+  - If response is received, client returns it to caller.
+  - If timeout/no response, client retries with the *same* `request_id`.
+- Success condition:
+  - Returns `ok` only after leader commits to majority.
+- Idempotency rule:
+  - Retries must not create duplicate log entries (leader dedup enforces this).
+
+**Get(key)**
+- Input:
+  - `key`: string identifier.
+- Expected behavior:
+  - Client sends to leader only.
+  - Returns latest committed value or `None` if key absent.
+- Consistency rule:
+  - No follower reads; avoids stale data.
+
+### 12.3 Client API Error Model (Conceptual)
+- `timeout`: no response; client should retry `Put` with same `request_id`.
+- `leader_unavailable`: if leader is down, client operations fail fast.
+- `temporary_failure`: network drop or slow node; client retries are allowed.
+
+### 12.4 Client API Dependencies (Unit Links)
+Client API → Leader RPC Handler → Dedup Store → Replication Log → Commit Engine
+
+### 12.5 Why This Unit Exists First
+- It defines the contract everything else must satisfy.
+- It sets the *idempotency requirement* that drives the dedup store.
+- It sets the *consistency requirement* that forces leader‑only reads.
